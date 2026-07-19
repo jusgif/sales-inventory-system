@@ -1,0 +1,231 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model
+model User {
+  id                String              @id @default(cuid())
+  clerkId           String              @unique
+  email             String              @unique
+  name              String
+  role              UserRole            @default(SALESPERSON)
+  isActive          Boolean             @default(true)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  // Relations
+  permissions       Permission[]
+  orders            Order[]
+  auditLogs         AuditLog[]
+  inventoryAdjustments InventoryAdjustment[]
+
+  @@index([clerkId])
+  @@index([email])
+}
+
+enum UserRole {
+  MANAGER
+  SALESPERSON
+}
+
+// Permission model - Granular permission control
+model Permission {
+  id                String    @id @default(cuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Permission types
+  canEditInventory  Boolean   @default(false)
+  canAddInventory   Boolean   @default(false)
+  canDeleteInventory Boolean  @default(false)
+  canViewInventory  Boolean   @default(true)
+  canCreateOrders   Boolean   @default(true)
+  canEditOrders     Boolean   @default(false)
+  canCancelOrders   Boolean   @default(false)
+  canMarkOrdersComplete Boolean @default(false)
+  canViewReports    Boolean   @default(false)
+  canExportCSV      Boolean   @default(false)
+  canManageUsers    Boolean   @default(false)
+  canManagePricing  Boolean   @default(false)
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([userId])
+  @@index([userId])
+}
+
+// Inventory Item model
+model InventoryItem {
+  id                String              @id @default(cuid())
+  name              String
+  sku               String              @unique
+  category          String
+  description       String?
+  currentStock      Int                 @default(0)
+  minimumStock      Int                 @default(10)
+  status            InventoryStatus     @default(ACTIVE)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  // Relations
+  priceOptions      PriceOption[]
+  orderItems        OrderItem[]
+  auditLogs         AuditLog[]
+  adjustments       InventoryAdjustment[]
+
+  @@index([sku])
+  @@index([category])
+  @@index([status])
+}
+
+enum InventoryStatus {
+  ACTIVE
+  INACTIVE
+}
+
+// Price Option model - Multiple prices per item
+model PriceOption {
+  id                String              @id @default(cuid())
+  inventoryItemId   String
+  inventoryItem     InventoryItem       @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  
+  priceType         String              // e.g., "Retail", "Wholesale", "Distributor"
+  price             Float
+  isActive          Boolean             @default(true)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  // Relations
+  orderItems        OrderItem[]
+
+  @@unique([inventoryItemId, priceType])
+  @@index([inventoryItemId])
+}
+
+// Order model
+model Order {
+  id                String              @id @default(cuid())
+  orderNumber       String              @unique
+  customerId        String?
+  customerName      String
+  customerPhone     String?
+  deliveryAddress   String?
+  
+  status            OrderStatus         @default(PENDING)
+  
+  userId            String
+  user              User                @relation(fields: [userId], references: [id])
+  
+  totalAmount       Float               @default(0)
+  
+  createdAt         DateTime            @default(now())
+  completedAt       DateTime?
+  completedBy       String?
+  updatedAt         DateTime            @updatedAt
+
+  // Relations
+  items             OrderItem[]
+  auditLogs         AuditLog[]
+
+  @@index([userId])
+  @@index([customerId])
+  @@index([status])
+  @@index([orderNumber])
+  @@index([createdAt])
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  CANCELLED
+}
+
+// Order Item model - Line items in orders
+model OrderItem {
+  id                String              @id @default(cuid())
+  orderId           String
+  order             Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  inventoryItemId   String
+  inventoryItem     InventoryItem       @relation(fields: [inventoryItemId], references: [id])
+  
+  priceOptionId     String
+  priceOption       PriceOption         @relation(fields: [priceOptionId], references: [id])
+  
+  quantity          Int
+  unitPrice         Float
+  totalPrice        Float               @default(0)
+
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([orderId])
+  @@index([inventoryItemId])
+  @@index([priceOptionId])
+}
+
+// Inventory Adjustment model - Track manual adjustments
+model InventoryAdjustment {
+  id                String              @id @default(cuid())
+  inventoryItemId   String
+  inventoryItem     InventoryItem       @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  
+  userId            String
+  user              User                @relation(fields: [userId], references: [id])
+  
+  adjustmentType    AdjustmentType
+  quantity          Int
+  reason            String?
+  
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([inventoryItemId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+enum AdjustmentType {
+  ADD
+  REMOVE
+  CORRECTION
+}
+
+// Audit Log model - Track all important actions
+model AuditLog {
+  id                String              @id @default(cuid())
+  userId            String
+  user              User                @relation(fields: [userId], references: [id])
+  
+  action            String              // e.g., "Inventory Updated", "Order Created", "Permission Changed"
+  entityType        String              // e.g., "InventoryItem", "Order", "User"
+  entityId          String
+  
+  previousValue     String?
+  newValue          String?
+  
+  orderId           String?
+  order             Order?              @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  
+  inventoryItemId   String?
+  inventoryItem     InventoryItem?      @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+  
+  createdAt         DateTime            @default(now())
+
+  @@index([userId])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([orderId])
+  @@index([inventoryItemId])
+  @@index([createdAt])
+}
